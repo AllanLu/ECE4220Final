@@ -1,12 +1,14 @@
 #include <iostream>
 #include <string>
+#include <stdio.h>
+
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdint.h>		// for the integer types
 #include <wiringPi.h>
 #include <wiringPiSPI.h>
 
-#include<sys/time.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -18,33 +20,16 @@
 #include <sys/ioctl.h>
 #include <fcntl.h>
 #include <pthread.h>  
+#include <semaphore.h>
+#define MSG_SIZE 200
 
 using namespace std;
 
-#define MSG_SIZE 100;
+sem_t my_semaphore;
 
 class RTUlog{
-    public unsigned int time_stamp;
-    public char[24] time_stamp_c;
-    public int RTU_num;
-    public int switch1;
-    public int switch2;
-    public int button;
-    public int LED1;
-    public int LED2;
-    public int LED3;
-    public int ADC;
-    public int change[6];
-    public char log[MSG_SIZE];
-    public string string_log;
-    char s[1];
-    char ss[2];
-    char sss[3];
-    time_t timep;
-    
-    
-
-    public RTUlog(){
+    public:
+        RTUlog(){
         switch1=0;
         switch2=0;
         button=0;
@@ -52,21 +37,37 @@ class RTUlog{
         LED1=0;
         LED2=0;
         LED3=0;
-        ADC=0；
-        change[0]=0；
-        change[1]=0；
-        change[2]=0；
-        change[3]=0；
-        change[4]=0；
-        change[5]=0；
+        ADC=0;
+        change[0]=0;
+        change[1]=0;
+        change[2]=0;
+        change[3]=0;
+        change[4]=0;
+        change[5]=0;
     }
-    public string check_status(int i){
+
+    unsigned int time_stamp;
+    char time_stamp_c[24];
+    int RTU_num;
+    int switch1;
+    int switch2;
+    int button;
+    int LED1;
+    int LED2;
+    int LED3;
+    int ADC;
+    int change[6];
+    char log[MSG_SIZE];
+    string string_log;
+    time_t timep;
+    
+    string check_status(int i){
         if(i)
         return "ON";
         else
         return "OFF";
     }
-    public string check_change(){
+    string check_change(){
         string temp="";
         if(change[0])
         temp+="S1 Change ";
@@ -80,9 +81,10 @@ class RTUlog{
         temp+="L2 Change ";
         if(change[5])
         temp+="L3 Change ";        
+        
         return temp;
     }
-    public char[] print_log(){
+    void print_log(char bu[]){
             bzero(log,MSG_SIZE);
             time(&timep);   
             printf("%s\n", ctime(&timep));
@@ -101,16 +103,18 @@ class RTUlog{
             string_log+=" L3";
             string_log+=check_status(LED3);
             string_log+=" Voltage: ";
-            string_log+=to_string(ADC);
+            string_log+=ADC;
             string_log+=" Event: ";
             string_log+=check_change();
             for(int i=0;i<string_log.length();i++)
             log[i]=string_log[i];
-            log[i]='\0';
+            log[string_log.length()]='\0';
+            strcpy(bu,log);
 
-            return log;
+            
     }
-}
+};
+
 
 int current=0;
 unsigned int current_time;
@@ -126,6 +130,7 @@ socklen_t fromlen,length;
 int status=0;
 int boolval = 1;			// for a socket option
 
+//use ISR to detect
 void switch1(){
     rtulog[current].change[0]=1;
 }
@@ -135,6 +140,23 @@ void switch2(){
 void button(){
     rtulog[current].change[2]=1;
 }
+
+void* Thread_log(void *arg){ 
+        while(1){
+        sem_wait(&my_semaphore);
+        current+=1;
+        rtulog[current].switch1=digitalRead(26);
+        rtulog[current].switch2=digitalRead(23);
+        rtulog[current].button=digitalRead(27);
+        rtulog[current].LED1=rtulog[current-1].LED1;
+        rtulog[current].LED2=rtulog[current-1].LED2;
+        rtulog[current].LED3=rtulog[current-1].LED3;
+        sem_post(&my_semaphore);
+
+        sleep(10); //wait 1 s
+        }
+        pthread_exit(0);
+    }
 
 int main(int argc, char *argv[])
 {
@@ -174,10 +196,11 @@ int main(int argc, char *argv[])
     if(wiringPiISR(27,INT_EDGE_RISING,&button) < 0)
     printf("Unable to setup ISR on button \n");
 
+    sem_init(&my_semaphore, 0, 1);
 
     sock = socket(AF_INET, SOCK_DGRAM, 0); // Creates socket
     if (sock < 0)
-    error("socket");
+    printf("socket error");
 
     length = sizeof(server);		// size of structure
     fromlen = sizeof(any);
@@ -204,42 +227,54 @@ int main(int argc, char *argv[])
     current_time=1000*tv.tv_sec+tv.tv_usec/1000;
 
     pthread_t ptr1;
-    int t1=pthread_create(&ptr1,NULL,(void *)&Thread_log,NULL);
+    int t1=pthread_create(&ptr1,NULL,Thread_log,NULL);
 
     while(1){
         n = recvfrom(sock, buffer, MSG_SIZE, 0, (struct sockaddr *)&any, &fromlen);     //receive message
         if (n < 0)
-            error("recvfrom");
+            printf("recvfrom error");
  
-        printf("%d: Received a datagram: %s\n",counter, buffer);
+        printf("Received a datagram: %s\n",buffer);
         //check ONLED
         if(strstr(buffer,"ONLED1")!=0){
             digitalWrite(8,1);
+            rtulog[current].LED1=1;
+            rtulog[current].change[3]=1;
         }
 
         //check ONLED
         if(strstr(buffer,"ONLED2")!=0){
             digitalWrite(9,1);
+            rtulog[current].LED2=1;
+            rtulog[current].change[4]=1;
         }
 
         //check ONLED
         if(strstr(buffer,"ONLED3")!=0){
             digitalWrite(7,1);
+            rtulog[current].LED3=1;
+            rtulog[current].change[5]=1;
         }
 
         //check OFFLED
         if(strstr(buffer,"OFFLED1")!=0){
             digitalWrite(8,0);
+            rtulog[current].LED1=0;
+            rtulog[current].change[3]=1;
         }
 
         //check OFFLED
         if(strstr(buffer,"OFFLED2")!=0){
             digitalWrite(9,0);
+            rtulog[current].LED2=0;
+            rtulog[current].change[4]=1;
         }
 
         //check OFFLED
         if(strstr(buffer,"OFFLED3")!=0){
             digitalWrite(7,0);
+            rtulog[current].LED3=0;
+            rtulog[current].change[5]=1;
         }
 
         //check LOG
@@ -248,15 +283,10 @@ int main(int argc, char *argv[])
                 //print all log
             }
             else{
-                log_num=atoi(buffer[3]);
+                log_num=buffer[3]-'0';//not detect array overflow
                 bzero(buffer,MSG_SIZE);
-                strcpy(buffer,"time stamp");
-            strcat(buffer,ip);
-            strcat(buffer," is the master");
-            sendto(sock,buffer,MSG_SIZE,0,(const struct sockaddr *)&any,fromlen);
-            bzero(buffer,MSG_SIZE);
-
-
+                rtulog[log_num].print_log(buffer);
+                sendto(sock,buffer,MSG_SIZE,0,(const struct sockaddr *)&any,fromlen);
             }
         }
 
@@ -265,9 +295,6 @@ int main(int argc, char *argv[])
     }
   
    close(sock);						// close socket.
-
-
-
 
     return 0;
 }
