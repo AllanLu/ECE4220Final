@@ -64,7 +64,6 @@ class RTUlog{
     string check_status(int i){
         if(i)
         return "ON";
-        else
         return "OFF";
     }
     string check_change(){
@@ -87,9 +86,10 @@ class RTUlog{
     void print_log(char bu[]){
             bzero(log,MSG_SIZE);
             time(&timep);   
-            printf("%s\n", ctime(&timep));
-            string_log=ctime(&timep);
-            string_log+="RTU #: 1";
+            //printf("%s\n", ctime(&timep));
+            //string_log=ctime(&timep);
+            string_log="";
+            string_log+="RTU1";
             string_log+=" S1";
             string_log+=check_status(switch1);
             string_log+=" S2";
@@ -102,7 +102,7 @@ class RTUlog{
             string_log+=check_status(LED2);
             string_log+=" L3";
             string_log+=check_status(LED3);
-            string_log+=" Voltage: ";
+            string_log+=" V: ";
             string_log+=ADC;
             string_log+=" Event: ";
             string_log+=check_change();
@@ -133,12 +133,24 @@ int boolval = 1;			// for a socket option
 //use ISR to detect
 void switch1(){
     rtulog[current].change[0]=1;
+    rtulog[current].switch1=1-rtulog[current-1].switch1;
+    cout<<"s1 ISR"<<endl;
 }
 void switch2(){
     rtulog[current].change[1]=1;
+    rtulog[current].switch2=1-rtulog[current-1].switch2;
+    cout<<"s2 ISR"<<endl;
 }
 void button(){
     rtulog[current].change[2]=1;
+    rtulog[current].button=1-rtulog[current-1].button;
+    cout<<"button ISR"<<endl;
+}
+
+void button2(){
+    rtulog[current].change[2]=1;
+    rtulog[current].button=1-rtulog[current-1].button;
+    cout<<"button2 ISR"<<endl;
 }
 
 void* Thread_log(void *arg){ 
@@ -152,8 +164,7 @@ void* Thread_log(void *arg){
         rtulog[current].LED2=rtulog[current-1].LED2;
         rtulog[current].LED3=rtulog[current-1].LED3;
         sem_post(&my_semaphore);
-
-        sleep(10); //wait 1 s
+        sleep(2); //wait 1 s
         }
         pthread_exit(0);
     }
@@ -179,22 +190,26 @@ int main(int argc, char *argv[])
     pinMode(26,INPUT);//switch1
     pinMode(23,INPUT);//switch2
     pinMode(27,INPUT);//button1
+
     
     //turn off LED
     digitalWrite(8,0);
     digitalWrite(9,0);
     digitalWrite(7,0);
 
-    pullUpDnControl(26,PUD_UP);
-    pullUpDnControl(23,PUD_UP);
-    pullUpDnControl(27,PUD_UP);
+    pullUpDnControl(26,PUD_DOWN);
+    pullUpDnControl(23,PUD_DOWN);
+    pullUpDnControl(27,PUD_DOWN);
 
-    if(wiringPiISR(26,INT_EDGE_RISING,&switch1) < 0)
+
+
+    if(wiringPiISR(26,INT_EDGE_FALLING,&switch1) < 0)
     printf("Unable to setup ISR on switch1 \n");
-    if(wiringPiISR(23,INT_EDGE_RISING,&switch2) < 0)
+    if(wiringPiISR(23,INT_EDGE_FALLING,&switch2) < 0)
     printf("Unable to setup ISR on switch2 \n");
-    if(wiringPiISR(27,INT_EDGE_RISING,&button) < 0)
+    if(wiringPiISR(27,INT_EDGE_FALLING,&button) < 0)
     printf("Unable to setup ISR on button \n");
+
 
     sem_init(&my_semaphore, 0, 1);
 
@@ -238,55 +253,78 @@ int main(int argc, char *argv[])
         //check ONLED
         if(strstr(buffer,"ONLED1")!=0){
             digitalWrite(8,1);
+            sem_wait(&my_semaphore);
             rtulog[current].LED1=1;
             rtulog[current].change[3]=1;
+            sem_post(&my_semaphore);
         }
 
         //check ONLED
         if(strstr(buffer,"ONLED2")!=0){
             digitalWrite(9,1);
+            sem_wait(&my_semaphore);
             rtulog[current].LED2=1;
             rtulog[current].change[4]=1;
+            sem_post(&my_semaphore);
         }
 
         //check ONLED
         if(strstr(buffer,"ONLED3")!=0){
             digitalWrite(7,1);
+            sem_wait(&my_semaphore);
             rtulog[current].LED3=1;
             rtulog[current].change[5]=1;
+            sem_post(&my_semaphore);
         }
 
         //check OFFLED
         if(strstr(buffer,"OFFLED1")!=0){
             digitalWrite(8,0);
+            sem_wait(&my_semaphore);
             rtulog[current].LED1=0;
             rtulog[current].change[3]=1;
+            sem_post(&my_semaphore);
         }
 
         //check OFFLED
         if(strstr(buffer,"OFFLED2")!=0){
             digitalWrite(9,0);
+            sem_wait(&my_semaphore);
             rtulog[current].LED2=0;
             rtulog[current].change[4]=1;
+            sem_post(&my_semaphore);
         }
 
         //check OFFLED
         if(strstr(buffer,"OFFLED3")!=0){
             digitalWrite(7,0);
+            sem_wait(&my_semaphore);
             rtulog[current].LED3=0;
             rtulog[current].change[5]=1;
+            sem_post(&my_semaphore);
         }
 
         //check LOG
         if(buffer[0]=='L' && buffer[1]=='O' && buffer[2]=='G'){
             if(buffer[3]=='0'){
-                //print all log
+                for(int i=0;i<current;i++){
+                cout<<"c0:"<<rtulog[i].change[0]<<endl;
+                cout<<"c1:"<<rtulog[i].change[1]<<endl;
+                cout<<"c2:"<<rtulog[i].change[2]<<endl;
+                cout<<"c3:"<<rtulog[i].change[3]<<endl;
+                cout<<"c4:"<<rtulog[i].change[4]<<endl;
+                cout<<"c5:"<<rtulog[i].change[5]<<endl;}
+                bzero(buffer,MSG_SIZE);
+                rtulog[current-1].print_log(buffer);
+                sendto(sock,buffer,MSG_SIZE,0,(const struct sockaddr *)&any,fromlen);
+                bzero(buffer,MSG_SIZE);
             }
             else{
                 log_num=buffer[3]-'0';//not detect array overflow
                 bzero(buffer,MSG_SIZE);
                 rtulog[log_num].print_log(buffer);
                 sendto(sock,buffer,MSG_SIZE,0,(const struct sockaddr *)&any,fromlen);
+                bzero(buffer,MSG_SIZE);
             }
         }
 

@@ -1,4 +1,6 @@
-File description
+## File description ##
+
+Final.cpp is the main program
 
 Final_k.c is for kernel space to detect switch(button) and control LEDs
 
@@ -6,7 +8,11 @@ Final_u.c is for user space to receive message from workstation to control LEDs 
 
 Final_WS is Lab6_client_WS used in class
 
-About circuit(if you see this message, please upload the photo you take)
+isr.c is to test the board whether the button is good(I found a broken board on Monday)
+
+## About circuit ## 
+
+(if you see this message, please upload the photo you take)
 
 R
 
@@ -20,9 +26,25 @@ C
 
 1uf
 
-time stamp
+## time stamp ##
 
 Fri Dec  1 23:46:59 2017
 
 012345678901234567890123
+
+## Example ##
+
+23:46:59 RTU1(time and RTU number)
+
+S1:ON S2:OFF B:OFF LED1:ON LED2:ON LED3:OFF(status)
+
+Voltage:1.5V(voltage)
+
+LED1 change(a list of events)
+
+S1 change
+
+Voltage overload
+
+
 
