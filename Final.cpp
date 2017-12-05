@@ -50,7 +50,7 @@ uint16_t get_ADC(int ADC_chan)
 	return ((spiData[1] << 8) | spiData[2]);
 }
 
-
+//need event list to show every event
 class RTUlog{
     public:
         RTUlog(){
@@ -87,9 +87,11 @@ class RTUlog{
     time_t timep;
     
     string check_status(int i){
-        if(i)
-        return "ON";
-        return "OFF";
+        if(i==1){
+        return "1";}
+        else  if(i==0){
+        return "0";
+        }
     }
     string check_change(){
         string temp="";
@@ -112,13 +114,48 @@ class RTUlog{
         
         return temp;
     }
+    
+    void print_log(char bu[]){
+            
+            bzero(log_temp,MSG_SIZE);
+            time(&timep);
+            string_log="";   
+            string s_temp=ctime(&timep);
+            for(int i=11;i<=18;i++)
+            string_log+=s_temp[i];
+            string_log+="R1:";
+            string_log+="S1";
+            printf("S1%d\n",switch1);
+            string_log+=check_status(switch1);
+            string_log+="S2";
+            string_log+=check_status(switch2);
+            string_log+="B";
+            string_log+=check_status(button);
+            string_log+="L1";
+            string_log+=check_status(LED1);
+            string_log+="L2";
+            string_log+=check_status(LED2);
+            string_log+="L3";
+            string_log+=check_status(LED3);
+            string_log+="V";
+            string_log+=ADC;
+            string_log+="E";
+            string_log+=check_change();
+
+            for(int i=0;i<string_log.length();i++)
+            log_temp[i]=string_log[i];
+            log_temp[string_log.length()]='\0';
+            cout<<"log is "<<string_log<<endl;
+            strcpy(bu,log_temp);
+
+    }
     void print_log1(char bu[]){
             
             bzero(log_temp,MSG_SIZE);
             time(&timep);   
             string s_temp=ctime(&timep);
-            for(int i=11;i<=18;i++)
-            stringlog[i-11]=s_temp[i];
+            for(int i=11;i<=20;i++)
+            string_log[i-11]=s_temp[i];
             string_log+=" RTU1:";
             for(int i=0;i<string_log.length();i++)
             log_temp[i]=string_log[i];
@@ -129,7 +166,7 @@ class RTUlog{
 
         void print_log2(char bu[]){
             bzero(log_temp,MSG_SIZE);
-            string_log="\n";
+
             string_log+="S1:";
             string_log+=check_status(switch1);
             string_log+=" S2:";
@@ -196,7 +233,7 @@ struct sockaddr_in server, any;
 socklen_t fromlen,length;
 int status=0;
 int boolval = 1;			// for a socket option
-
+int sendflag=1;
 //use ISR to detect
 void switch1(){
     sem_wait(&my_semaphore);
@@ -247,28 +284,41 @@ void* Thread_ADC(void *arg){
     }
 //report every 1s
 void* Thread_report(void *arg){ 
+        printf("start report\n");
+        while(sendflag){};
         while(1){
         sem_wait(&my_semaphore);
+        
         rtulog[1].switch1=digitalRead(26);
         rtulog[1].switch2=digitalRead(23);
         rtulog[1].button=digitalRead(27);
         rtulog[1].LED1=rtulog[0].LED1;
         rtulog[1].LED2=rtulog[0].LED2;
         rtulog[1].LED3=rtulog[0].LED3;
-        time_pass(rtulog[0],rtulog[1]);
+        
+        rtulog[0].switch1=rtulog[1].switch1;
+        rtulog[0].switch2=rtulog[1].switch2;
+        rtulog[0].button=rtulog[1].button;
+        rtulog[0].LED1=rtulog[1].LED1;
+        rtulog[0].LED2=rtulog[1].LED2;
+        rtulog[0].LED3=rtulog[1].LED3;
+        rtulog[0].ADC=rtulog[1].ADC;
+        for(int i=0;i<6;i++)
+        rtulog[0].change[i]=rtulog[1].change[i];
+        
         rtulog[1].init();
         bzero(log_buffer,MSG_SIZE);
-        rtulog[0].print_log1(log_buffer);       
+        rtulog[0].print_log(log_buffer);    
         sendto(sock,log_buffer,MSG_SIZE,0,(const struct sockaddr *)&any,fromlen);
-        bzero(log_buffer,MSG_SIZE);
-        rtulog[0].print_log2(log_buffer);       
-        sendto(sock,log_buffer,MSG_SIZE,0,(const struct sockaddr *)&any,fromlen);
-        bzero(log_buffer,MSG_SIZE);
-        rtulog[0].print_log3(log_buffer);       
-        sendto(sock,log_buffer,MSG_SIZE,0,(const struct sockaddr *)&any,fromlen);
-        bzero(log_buffer,MSG_SIZE);                
+        // bzero(log_buffer,MSG_SIZE);
+        // rtulog[0].print_log2(log_buffer); 
+        // sendto(sock,log_buffer,MSG_SIZE,0,(const struct sockaddr *)&any,fromlen);
+        // bzero(log_buffer,MSG_SIZE);
+        // rtulog[0].print_log3(log_buffer);     
+        // sendto(sock,log_buffer,MSG_SIZE,0,(const struct sockaddr *)&any,fromlen);
+        // bzero(log_buffer,MSG_SIZE);                
         sem_post(&my_semaphore);
-        sleep(1); //wait 1 s
+        sleep(10); //wait 1 s
         }
         pthread_exit(0);
     }
@@ -350,21 +400,23 @@ int main(int argc, char *argv[])
 
     
 
-    pthread_t ptr1，ptr2;
+    pthread_t ptr1,ptr2;
     int t1=pthread_create(&ptr1,NULL,Thread_ADC,NULL);
     int t2=pthread_create(&ptr2,NULL,Thread_report,NULL);
 
     while(1){
+        bzero(buffer,MSG_SIZE);
         n = recvfrom(sock, buffer, MSG_SIZE, 0, (struct sockaddr *)&any, &fromlen);     //receive message
         if (n < 0)
             printf("recvfrom error");
- 
+        
         printf("Received a datagram: %s\n",buffer);
+        sendflag=0;
         //check ONLED
         if(strstr(buffer,"ONLED1")!=0){
             digitalWrite(8,1);
             sem_wait(&my_semaphore);
-            rtulog[1].LED1=1;
+            rtulog[0].LED1=1;
             rtulog[1].change[3]=1;
             sem_post(&my_semaphore);
         }
@@ -373,7 +425,7 @@ int main(int argc, char *argv[])
         if(strstr(buffer,"ONLED2")!=0){
             digitalWrite(9,1);
             sem_wait(&my_semaphore);
-            rtulog[1].LED2=1;
+            rtulog[0].LED2=1;
             rtulog[1].change[4]=1;
             sem_post(&my_semaphore);
         }
@@ -382,7 +434,7 @@ int main(int argc, char *argv[])
         if(strstr(buffer,"ONLED3")!=0){
             digitalWrite(7,1);
             sem_wait(&my_semaphore);
-            rtulog[1].LED3=1;
+            rtulog[0].LED3=1;
             rtulog[1].change[5]=1;
             sem_post(&my_semaphore);
         }
@@ -391,7 +443,7 @@ int main(int argc, char *argv[])
         if(strstr(buffer,"OFFLED1")!=0){
             digitalWrite(8,0);
             sem_wait(&my_semaphore);
-            rtulog[1].LED1=0;
+            rtulog[0].LED1=0;
             rtulog[1].change[3]=1;
             sem_post(&my_semaphore);
         }
@@ -400,7 +452,7 @@ int main(int argc, char *argv[])
         if(strstr(buffer,"OFFLED2")!=0){
             digitalWrite(9,0);
             sem_wait(&my_semaphore);
-            rtulog[1].LED2=0;
+            rtulog[0].LED2=0;
             rtulog[1].change[4]=1;
             sem_post(&my_semaphore);
         }
@@ -409,34 +461,13 @@ int main(int argc, char *argv[])
         if(strstr(buffer,"OFFLED3")!=0){
             digitalWrite(7,0);
             sem_wait(&my_semaphore);
-            rtulog[1].LED3=0;
+            rtulog[0].LED3=0;
             rtulog[1].change[5]=1;
             sem_post(&my_semaphore);
         }
 
-        //check LOG
-        if(buffer[0]=='L' && buffer[1]=='O' && buffer[2]=='G'){
-            if(buffer[3]=='0'){
-                for(int i=0;i<current;i++){
-                cout<<"c0:"<<rtulog[i].change[0]<<endl;
-                cout<<"c1:"<<rtulog[i].change[1]<<endl;
-                cout<<"c2:"<<rtulog[i].change[2]<<endl;
-                cout<<"c3:"<<rtulog[i].change[3]<<endl;
-                cout<<"c4:"<<rtulog[i].change[4]<<endl;
-                cout<<"c5:"<<rtulog[i].change[5]<<endl;}
-                bzero(buffer,MSG_SIZE);
-                rtulog[current-1].print_log(buffer);
-                sendto(sock,buffer,MSG_SIZE,0,(const struct sockaddr *)&any,fromlen);
-                bzero(buffer,MSG_SIZE);
-            }
-            else{
-                log_num=buffer[3]-'0';//not detect array overflow
-                bzero(buffer,MSG_SIZE);
-                rtulog[log_num].print_log(buffer);
-                sendto(sock,buffer,MSG_SIZE,0,(const struct sockaddr *)&any,fromlen);
-                bzero(buffer,MSG_SIZE);
-            }
-        }
+
+
 
 
 

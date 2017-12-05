@@ -17,14 +17,14 @@ int main(int argc, char *argv[]){
     pinMode(27,INPUT);
     pinMode(0,INPUT);
     pinMode(1,INPUT);
-    pinMode(24,INPUT);
-    pinMode(28,INPUT);
+    pinMode(26,INPUT);//24
+    pinMode(23,INPUT);//28
 
     pullUpDnControl(27,PUD_DOWN);
     pullUpDnControl(0,PUD_DOWN);
     pullUpDnControl(1,PUD_DOWN);
-    pullUpDnControl(24,PUD_DOWN);
-    pullUpDnControl(28,PUD_DOWN);
+    pullUpDnControl(26,PUD_DOWN);
+    pullUpDnControl(23,PUD_DOWN);
     
     if(0>wiringPiISR(27,INT_EDGE_FALLING,button123))
     {
@@ -33,7 +33,7 @@ int main(int argc, char *argv[]){
     }
 
     while(1){
-        printf("button1 %d button2 %d button3 %d button4 %d button5 %d \n",digitalRead(27),digitalRead(0),digitalRead(1),digitalRead(24),digitalRead(28));                
+        printf("button1 %d button2 %d button3 %d button4 %d button5 %d \n",digitalRead(27),digitalRead(0),digitalRead(1),digitalRead(26),digitalRead(23));                
         if(digitalRead(27)==LOW)
         printf("button press\n");
         delay(2);
