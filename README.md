@@ -1,3 +1,10 @@
+## Things to be done ##
+
+1. Server and client program
+
+2. Event list
+
+
 ## File description ##
 
 Final.cpp is the main program
