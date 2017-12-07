@@ -30,6 +30,9 @@ using namespace std;
 sem_t my_semaphore;
 uint16_t ADCvalue;
 uint16_t get_ADC(int channel);
+int globaleventlist[10];
+int globaleventcount;
+int pipe_p[2], pipe_c[2];
 
 void error(const char *msg)
 {
@@ -85,12 +88,13 @@ class RTUlog{
     int LED3;
     int ADC;
     int change[6];
+    int voltage[2];
     string string_log;
     char log_temp[MSG_SIZE];
     time_t timep;
     int eventcount;
     int eventlist[10];//0:s1 1:s2 2:b 3:L1 4:L2 5:L3 6:overload 7:no power
-
+    char int2char[3];
     
     string check_status(int i){
         if(i==1){
@@ -130,7 +134,6 @@ class RTUlog{
             case 5:s+="L3 Change ";break;
             case 6:s+="Overload ";break;
             case 7:s+="No power ";break;
-            default:;
         }       
         
         return s;
@@ -173,11 +176,13 @@ class RTUlog{
     void print_log1(char bu[]){
             
             bzero(log_temp,MSG_SIZE);
+            string_log="RTU1@";
             time(&timep);   
             string s_temp=ctime(&timep);
-            for(int i=11;i<=20;i++)
-            string_log[i-11]=s_temp[i];
-            string_log+=" RTU1:";
+
+            for(int i=11;i<=18;i++)
+            string_log+=s_temp[i];
+            //string_log[i-6]=s_temp[i];
             for(int i=0;i<string_log.length();i++)
             log_temp[i]=string_log[i];
             log_temp[string_log.length()]='\0';
@@ -187,7 +192,8 @@ class RTUlog{
 
         void print_log2(char bu[]){
             bzero(log_temp,MSG_SIZE);
-
+            printf("r0 %d %d %d\n",LED1,LED2,LED3);
+            string_log="";
             string_log+="S1:";
             string_log+=check_status(switch1);
             string_log+=" S2:";
@@ -201,7 +207,10 @@ class RTUlog{
             string_log+=" L3:";
             string_log+=check_status(LED3);
             string_log+=" V:";
-            string_log+=ADC;
+            bzero(int2char,3);
+            sprintf(int2char,"%d",ADC);
+            string_log+=int2char;
+            string_log+="\n";
             for(int i=0;i<string_log.length();i++)
             log_temp[i]=string_log[i];
             log_temp[string_log.length()]='\0';
@@ -219,11 +228,13 @@ class RTUlog{
             strcpy(bu,log_temp);
 
     }
-            void print_log4(char bu[]){
+        void print_log4(char bu[]){
             bzero(log_temp,MSG_SIZE);
             string_log="Event: ";
-            for(int i=0;i<=eventcount;i++)
+            //printf("before check event\n");
+            for(int i=0;i<eventcount;i++)
             string_log=check_event(i,string_log);
+            //printf("after check event\n");
             for(int i=0;i<string_log.length();i++)
             log_temp[i]=string_log[i];
             log_temp[string_log.length()]='\0';
@@ -261,9 +272,10 @@ int status=0;
 int sockfd, portno, n;
 struct sockaddr_in serv_addr;
 struct hostent *server;
-char buffer[MSG_SIZE];
 char msg[MSG_SIZE];
 pid_t p;
+int sendflag;
+
 
 
 //use ISR to detect
@@ -303,7 +315,7 @@ void* Thread_ADC(void *arg){
         sem_wait(&my_semaphore);
         rtulog[1].ADC=ADCvalue;
         sem_post(&my_semaphore);
-		sleep(2);// delay 1s
+		sleep(1);// delay 1s
         
         }
         pthread_exit(0);
@@ -311,10 +323,9 @@ void* Thread_ADC(void *arg){
 //report every 1s
 void* Thread_report(void *arg){ 
         printf("start report\n");
-        while(sendflag){};
         while(1){
         sem_wait(&my_semaphore);
-        
+        //printf("before init\n");
         rtulog[1].switch1=digitalRead(26);
         rtulog[1].switch2=digitalRead(23);
         rtulog[1].button=digitalRead(27);
@@ -328,26 +339,46 @@ void* Thread_report(void *arg){
         rtulog[0].LED1=rtulog[1].LED1;
         rtulog[0].LED2=rtulog[1].LED2;
         rtulog[0].LED3=rtulog[1].LED3;
+        
         rtulog[0].ADC=rtulog[1].ADC;
         rtulog[0].eventcount=rtulog[1].eventcount;
         for(int i=0;i<6;i++)
         rtulog[0].change[i]=rtulog[1].change[i];
-        for(int i=0;i<10;i++)
+        for(int i=0;i<rtulog[1].eventcount;i++)
         rtulog[0].eventlist[i]=rtulog[1].eventlist[i];
         
         rtulog[1].init();
         bzero(log_buffer,MSG_SIZE);
         rtulog[0].print_log1(log_buffer);    
-        write(sockfd,log_buffer,strlen(log_buffer));	// sendto() could be used.
+        //write(sockfd,"log1\n",5);
+        //write(sockfd,log_buffer,strlen(log_buffer));	// sendto() could be used.
         bzero(log_buffer,MSG_SIZE);
         rtulog[0].print_log2(log_buffer); 
-        write(sockfd,log_buffer,strlen(log_buffer));
+        //write(sockfd,log_buffer,strlen(log_buffer));
+        //write(sockfd,"log2\n",5);
         bzero(log_buffer,MSG_SIZE);
-        rtulog[0].print_log4(log_buffer);     
-        write(sockfd,log_buffer,strlen(log_buffer));
+        //printf("before log4\n");
+        rtulog[0].print_log4(log_buffer);  
+        //printf("after log4\n");
+       // write(sockfd,"log3\n",5);   
+        //write(sockfd,log_buffer,strlen(log_buffer));
         bzero(log_buffer,MSG_SIZE);                
         sem_post(&my_semaphore);
         sleep(10); //wait 1 s
+        }
+        pthread_exit(0);
+    }
+
+    //read ADC
+void* Thread_LED(void *arg){ 
+        sleep(10);
+        while(1){
+
+        int LEDe=0;
+        read(pipe_c[0], &LEDe,sizeof(LEDe));
+        printf("pipe %d\n",LEDe);
+        sleep(1);
+        
         }
         pthread_exit(0);
     }
@@ -368,6 +399,16 @@ int main(int argc, char *argv[])
 	if(wiringPiSPISetup(SPI_CHANNEL, SPI_SPEED) < 0) {
 		printf("wiringPiSPISetup failed\n");
 		return -1 ;
+	}
+    if(pipe(pipe_p) < 0)
+	{
+		printf("pipe creation error\n");
+		exit(-1);
+	}
+	if(pipe(pipe_c) < 0)
+	{
+		printf("pipe creation error\n");
+		exit(-1);
 	}
 
 
@@ -392,7 +433,7 @@ int main(int argc, char *argv[])
     pullUpDnControl(23,PUD_DOWN);
     pullUpDnControl(27,PUD_DOWN);
 
-
+    //considering use both to detect rising and falling
     if(wiringPiISR(26,INT_EDGE_FALLING,&switch1) < 0)
     printf("Unable to setup ISR on switch1 \n");
     if(wiringPiISR(23,INT_EDGE_FALLING,&switch2) < 0)
@@ -430,13 +471,108 @@ int main(int argc, char *argv[])
     //main receive massage from socket
     //thread log information
 
+    globaleventcount=0;
+    for(int i=0;i<10;i++)
+    globaleventlist[i]=0;
     
+    p=fork();
 
-    pthread_t ptr1,ptr2;
+    pthread_t ptr1,ptr2,ptr3;
+
+    if(p!=0){
+        close(pipe_p[1]);		// not really needed, but it emphasizes that these sides
+	    close(pipe_c[0]);		// are not needed for the parent process (in this example)
+        int t3=pthread_create(&ptr3,NULL,Thread_LED,NULL);
+        while(1){
+        sem_wait(&my_semaphore);
+        rtulog[1].switch1=digitalRead(26);
+        rtulog[1].switch2=digitalRead(23);
+        rtulog[1].button=digitalRead(27);
+        // rtulog[1].LED1=rtulog[0].LED1;
+        // rtulog[1].LED2=rtulog[0].LED2;
+        // rtulog[1].LED3=rtulog[0].LED3;
+
+        rtulog[1].LED1=digitalRead(8);
+        rtulog[1].LED2=digitalRead(9);
+        rtulog[1].LED3=digitalRead(7);
+        
+        rtulog[0].switch1=rtulog[1].switch1;
+        rtulog[0].switch2=rtulog[1].switch2;
+        rtulog[0].button=rtulog[1].button;
+
+        if(rtulog[0].LED1!=rtulog[1].LED1){
+            rtulog[1].eventlist[rtulog[1].eventcount]=3;
+            rtulog[1].eventcount++;
+        }
+        if(rtulog[0].LED2!=rtulog[1].LED2){
+            rtulog[1].eventlist[rtulog[1].eventcount]=4;
+            rtulog[1].eventcount++;
+        }
+        if(rtulog[0].LED3!=rtulog[1].LED3){
+            rtulog[1].eventlist[rtulog[1].eventcount]=5;
+            rtulog[1].eventcount++;
+        }
+
+
+        rtulog[0].LED1=rtulog[1].LED1;
+        rtulog[0].LED2=rtulog[1].LED2;
+        rtulog[0].LED3=rtulog[1].LED3;
+        rtulog[0].ADC=rtulog[1].ADC;
+        rtulog[0].eventcount=rtulog[1].eventcount;
+        for(int i=0;i<6;i++)
+        rtulog[0].change[i]=rtulog[1].change[i];
+        for(int i=0;i<rtulog[1].eventcount;i++)
+        rtulog[0].eventlist[i]=rtulog[1].eventlist[i];
+        
+        rtulog[1].init();
+        sem_post(&my_semaphore);
+        bzero(log_buffer,MSG_SIZE);
+        rtulog[0].print_log1(log_buffer);
+        n = write(sockfd,log_buffer,strlen(log_buffer));
+        if (n < 0)
+            error("ERROR writing to socket");
+
+        bzero(log_buffer,MSG_SIZE);
+        rtulog[0].print_log2(log_buffer);
+        n = write(sockfd,log_buffer,strlen(log_buffer));
+        if (n < 0)
+         error("ERROR writing to socket");
+        
+
+        // printf("rtu event count%d \n",rtulog[0].eventcount);
+        // for(int i=0;i<10;i++)
+        // printf("%d ",rtulog[0].eventlist[i]);
+        
+        // printf("\nglobal event count %d\n",globaleventcount);
+        
+        // for(int j=0;j<10;j++)
+        // printf("%d ",globaleventlist[j]);
+
+
+
+        bzero(log_buffer,MSG_SIZE);
+        rtulog[0].print_log4(log_buffer);
+        n = write(sockfd,log_buffer,strlen(log_buffer));
+        if (n < 0)
+        error("ERROR writing to socket");
+        //write(sockfd,"log1\n",5);
+        //write(sockfd,"log2\n",5);
+        //write(sockfd,"log3\n",5);
+        
+        sleep(10);
+        }
+
+    }
+    else{
+    close(pipe_p[0]);	// not really needed, but it emphasizes that these sides
+	close(pipe_c[1]);	// are not needed for the child process (in this example)
+    
     int t1=pthread_create(&ptr1,NULL,Thread_ADC,NULL);
-    int t2=pthread_create(&ptr2,NULL,Thread_report,NULL);
-
-    while(1){
+    //int t2=pthread_create(&ptr2,NULL,Thread_report,NULL);
+    int x=0;
+    int LEDevent=0;
+    while(x<100000){
+        x++;
         bzero(buffer,MSG_SIZE);
         n = read(sockfd,buffer,MSG_SIZE-1);	// recvfrom() could be used
         if (n < 0)
@@ -447,8 +583,11 @@ int main(int argc, char *argv[])
         //check ONLED
         if(strstr(buffer,"ONLED1")!=0){
             digitalWrite(8,1);
+            LEDevent=4;
+            write(pipe_c[1], &LEDevent, sizeof(LEDevent));
             sem_wait(&my_semaphore);
             rtulog[0].LED1=1;
+            rtulog[1].LED1=1;
             rtulog[1].change[3]=1;
             rtulog[1].eventlist[rtulog[1].eventcount]=3;
             rtulog[1].eventcount++;
@@ -458,8 +597,11 @@ int main(int argc, char *argv[])
         //check ONLED
         if(strstr(buffer,"ONLED2")!=0){
             digitalWrite(9,1);
+            LEDevent=5;
+            write(pipe_c[1], &LEDevent, sizeof(LEDevent));
             sem_wait(&my_semaphore);
             rtulog[0].LED2=1;
+            rtulog[1].LED2=1;
             rtulog[1].change[4]=1;
             rtulog[1].eventlist[rtulog[1].eventcount]=4;
             rtulog[1].eventcount++;
@@ -469,8 +611,11 @@ int main(int argc, char *argv[])
         //check ONLED
         if(strstr(buffer,"ONLED3")!=0){
             digitalWrite(7,1);
+            LEDevent=6;
+            write(pipe_c[1], &LEDevent, sizeof(LEDevent));
             sem_wait(&my_semaphore);
             rtulog[0].LED3=1;
+            rtulog[1].LED3=1;
             rtulog[1].change[5]=1;
             rtulog[1].eventlist[rtulog[1].eventcount]=5;
             rtulog[1].eventcount++;
@@ -480,8 +625,11 @@ int main(int argc, char *argv[])
         //check OFFLED
         if(strstr(buffer,"OFFLED1")!=0){
             digitalWrite(8,0);
+            LEDevent=4;
+            write(pipe_c[1], &LEDevent, sizeof(LEDevent));
             sem_wait(&my_semaphore);
             rtulog[0].LED1=0;
+            rtulog[1].LED1=0;
             rtulog[1].change[3]=1;
             rtulog[1].eventlist[rtulog[1].eventcount]=3;
             rtulog[1].eventcount++;
@@ -491,8 +639,11 @@ int main(int argc, char *argv[])
         //check OFFLED
         if(strstr(buffer,"OFFLED2")!=0){
             digitalWrite(9,0);
+            LEDevent=5;
+            write(pipe_c[1], &LEDevent, sizeof(LEDevent));
             sem_wait(&my_semaphore);
             rtulog[0].LED2=0;
+            rtulog[1].LED2=0;
             rtulog[1].change[4]=1;
             rtulog[1].eventlist[rtulog[1].eventcount]=4;
             rtulog[1].eventcount++;
@@ -502,8 +653,11 @@ int main(int argc, char *argv[])
         //check OFFLED
         if(strstr(buffer,"OFFLED3")!=0){
             digitalWrite(7,0);
+            LEDevent=6;
+            write(pipe_c[1], &LEDevent, sizeof(LEDevent));
             sem_wait(&my_semaphore);
             rtulog[0].LED3=0;
+            rtulog[1].LED3=0;
             rtulog[1].change[5]=1;
             rtulog[1].eventlist[rtulog[1].eventcount]=5;
             rtulog[1].eventcount++;
@@ -514,7 +668,7 @@ int main(int argc, char *argv[])
 
 
 
-
+    }
     }
     close(sockfd);	
     return 0;

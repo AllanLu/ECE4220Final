@@ -11,7 +11,7 @@ Final.cpp is the main program
 
 Final_server is a tcp server
 
-#### Files below is additional ####
+#### Files below are additional ####
 
 Final_k.c is for kernel space to detect switch(button) and control LEDs
 
