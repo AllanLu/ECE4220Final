@@ -1,7 +1,3 @@
-/* 	Name       : 	server_udp.c
-	Author     : 	Luis A. Rivera
-	Description: 	Simple server (UDP)
-					ECE4220/7220		*/
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,72 +7,109 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
-#include <arpa/inet.h>
+#include <signal.h>
 
 #define MSG_SIZE 40			// message size
+pid_t p;
 
+void dostuff(int); 			// function prototype
 void error(const char *msg)
 {
     perror(msg);
-    exit(0);
+    exit(1);
 }
 
 int main(int argc, char *argv[])
 {
-   int sock, length, n;
-   int boolval = 1;		// for a socket option
-   socklen_t fromlen;
-   struct sockaddr_in server;
-   struct sockaddr_in from;
-   char buf[MSG_SIZE];
+     int sockfd, newsockfd, portno, pid, j = 0;
+     socklen_t clilen;
+     struct sockaddr_in serv_addr, cli_addr;
 
-   if (argc < 2)
-   {
-      fprintf(stderr, "ERROR, no port provided\n");
-      exit(0);
-   }
 
-   sock = socket(AF_INET, SOCK_DGRAM, 0); // Creates socket. Connectionless.
-   if (sock < 0)
-	   error("Opening socket");
+     if (argc < 2) {
+         fprintf(stderr,"ERROR, no port provided\n");
+         exit(1);
+     }
 
-   length = sizeof(server);			// length of structure
-   bzero(&server,length);			// sets all values to zero. memset() could be used
-   server.sin_family = AF_INET;		// symbol constant for Internet domain
-   server.sin_addr.s_addr = INADDR_ANY;		// IP address of the machine on which
-											// the server is running
-   server.sin_port = htons(atoi(argv[1]));	// port number
+     sockfd = socket(AF_INET, SOCK_STREAM, 0); // Creates socket. Connection based.
+     if (sockfd < 0)
+    	 error("ERROR opening socket");
 
-   // binds the socket to the address of the host and the port number
-   if (bind(sock, (struct sockaddr *)&server, length) < 0)
-       error("binding");
+     // fill in fields
+     bzero((char *) &serv_addr, sizeof(serv_addr));
+     portno = atoi(argv[1]);	// get port number from input
+     serv_addr.sin_family = AF_INET;		 // symbol constant for Internet domain
+     serv_addr.sin_addr.s_addr = INADDR_ANY; // IP address of the machine on which
+											 // the server is running
+     serv_addr.sin_port = htons(portno);	 // port number
 
-   // set broadcast option
-   if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &boolval, sizeof(boolval)) < 0)
-   	{
-   		printf("error setting socket options\n");
-   		exit(-1);
-   	}
+     // binds the socket to the address of the host and the port number
+     if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
+    	 error("ERROR on binding");
 
-   fromlen = sizeof(struct sockaddr_in);	// size of structure
+     listen(sockfd, 5);			// listen for connections
+     clilen = sizeof(cli_addr);	// size of structure
 
-   while (1)
-   {
-	   // bzero: to "clean up" the buffer. The messages aren't always the same length...
-	   bzero(buf,MSG_SIZE);		// sets all values to zero. memset() could be used.
-	   // receive from client
-       n = recvfrom(sock, buf, MSG_SIZE, 0, (struct sockaddr *)&from, &fromlen);
-       if (n < 0)
-    	   error("recvfrom");
+	 // To allow the server to handle multiple simultaneous connections: infinite
+     // loop and fork.
+     while (1)
+     {
+    	 // blocks until a client connects to the server
+         newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
+         if (newsockfd < 0)
+             error("ERROR on accept");
 
-	   printf("Received a datagram: %s\n", buf);
-       
-       // send message to client
-       n = sendto(sock, "Got your message\n", 17, 0, (struct sockaddr *)&from, fromlen);
-       if (n  < 0)
-    	   error("sendto");
-   }
+         j++;		// counter for the connections that are established.
+         pid = fork();
+         if (pid < 0)
+             error("ERROR on fork");
 
-   return 0;
- }
+         if (pid == 0)	// child process
+         {
+        	 printf("RTU #%d connected\n",j);
+             close(sockfd);			// close socket
+             dostuff(newsockfd);	// call function that handles communication
+             exit(0);
+         }
+         else			// parent
+         {
+        	 close(newsockfd);
+        	 signal(SIGCHLD,SIG_IGN);	// to avoid zombie problem
+         }
+     } 	// end of while
+
+     close(sockfd);
+     return 0; 		// we never get here
+}
+
+/********************************* DOSTUFF() **********************************
+ There is a separate instance of this function for each connection.  It handles
+ all communication once a connection has been established.
+ *****************************************************************************/
+void dostuff (int sock)
+{
+   int n;
+   char buffer[MSG_SIZE];
+   char msg[MSG_SIZE];
+   p=fork();
+    if(p==0){
+     //child
+    while(1){
+    bzero(msg,MSG_SIZE);
+    fgets(msg,MSG_SIZE-1,stdin);
+    n = write(sock,msg,MSG_SIZE);	// sendto() could be used.
+    if (n < 0)
+	   error("ERROR writing to socket");}
+}
+    else{
+    while(1){
+    bzero(buffer,MSG_SIZE);
+    n = read(sock,buffer,MSG_SIZE-1);	// recvfrom() could be used
+    if (n < 0)
+	    error("ERROR reading from socket");
+    printf("%s\n",buffer);}
+
+    }
+
+}
 
