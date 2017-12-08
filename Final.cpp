@@ -24,7 +24,7 @@
 #include <pthread.h>  
 #include <semaphore.h>
 
-#define MSG_SIZE 40
+#define MSG_SIZE 50
 #define SPI_CHANNEL	      0	// 0 or 1
 #define SPI_SPEED 	2000000	// Max speed is 3.6 MHz when VDD = 5 V
 #define ADC_CHANNEL       2	// Between 1 and 3
@@ -34,8 +34,9 @@ sem_t my_semaphore;
 uint16_t ADCvalue;
 uint16_t get_ADC(int channel);
 int pipe_c[2];
+float voltage;
 
-RTUlog rtulog[2];//0 for the past 1s, 1 for current 1s
+
 char buffer[MSG_SIZE]; //buffer used to receive message
 char log_buffer[MSG_SIZE];//buffer used to send message
 
@@ -98,12 +99,13 @@ class RTUlog{
     int LED2;
     int LED3;
     int ADC;
+    float output_v;
     string string_log;//use to send message
     char log_temp[MSG_SIZE];//use to send message
     time_t timep;//record time
     int eventcount;//record event
     int eventlist[10];//0:s1 1:s2 2:b 3:L1 4:L2 5:L3 6:overload 7:no power
-    char int2char[3];//use to convert from int to char[]
+    char int2char[5];//use to convert from int to char[]
     
     //check status
     string check_status(int i){
@@ -161,22 +163,29 @@ class RTUlog{
         string_log+=" L3:";
         string_log+=check_status(LED3);
         string_log+=" V:";
-        bzero(int2char,3);
-        sprintf(int2char,"%d",ADC);
+        
+        bzero(int2char,5);
+        printf("inside %.2f",output_v);
+        sprintf(int2char,"%.2f",output_v);
         string_log+=int2char;
-        string_log+="\n";
+        string_log+='\n';
+        
+        //printf("after char r0 %d\n",eventcount);
         //convert from string to char[]
-        for(int i=0;i<string_log.length();i++)
-        log_temp[i]=string_log[i];
+        for(int j=0;j<string_log.length();j++)
+        log_temp[j]=string_log[j];
+        //printf("before copy r0 %d\n",eventcount);
         log_temp[string_log.length()]='\0';
         strcpy(bu,log_temp);
+        
 
     }
     //print event
     void print_log4(char bu[]){
         bzero(log_temp,MSG_SIZE);
-        string_log="Event: ";
+        string_log="      Event: ";
         for(int i=0;i<eventcount;i++)
+        //printf("inside function %d\n",eventcount);
         string_log=check_event(i,string_log);
         //convert from string to char[]
         for(int i=0;i<string_log.length();i++)
@@ -200,7 +209,7 @@ class RTUlog{
         eventlist[i]=0;
     }
 };
-
+RTUlog rtulog[2];//0 for the past 1s, 1 for current 1s
 
 
 //use ISR to detect
@@ -231,13 +240,23 @@ void* Thread_ADC(void *arg){
         while(1){
         
         ADCvalue = get_ADC(ADC_CHANNEL);
-		//printf("ADC Value: %d\n", ADCvalue);
-		fflush(stdout);
+        printf("ADC Value: %d\n", ADCvalue);
+        fflush(stdout);
+
+
         sem_wait(&my_semaphore);
         rtulog[1].ADC=ADCvalue;
-        if(ADCvalue>2 || ADCvalue<1)
+
+
+        rtulog[1].output_v=((3.300/1023)*ADCvalue)/2.0;
+        int rand_num=rand();
+        if(rand_num%9==0 || rand_num %7==0)
+        rtulog[1].output_v+=1;
+        //rtulog[1].output_v=(9.00/1023)*ADCvalue;
+        printf("adc %.2f",rtulog[1].output_v);
+        if(rtulog[1].output_v>2 ||(rtulog[1].output_v<1 && rtulog[1].output_v>0)){
         rtulog[1].eventlist[rtulog[1].eventcount]=6;
-        rtulog[1].eventcount++;
+        rtulog[1].eventcount++;}
         sem_post(&my_semaphore);
 		sleep(1);// delay 1s
         
@@ -335,7 +354,7 @@ int main(int argc, char *argv[])
     
     //father
     if(p != 0){
-
+        int t1=pthread_create(&ptr1,NULL,Thread_ADC,NULL);
 	    close(pipe_c[0]);//plan to use pipe to communicate between father and child process
         
         while(1){
@@ -367,7 +386,7 @@ int main(int argc, char *argv[])
             rtulog[1].eventcount++;
         }
         //detect no power
-        if(rtulog[0].ADC==rtulog[1].ADC){
+        if(rtulog[0].output_v==rtulog[1].output_v){
             rtulog[1].eventlist[rtulog[1].eventcount]=7;
             rtulog[1].eventcount++;
         }
@@ -376,29 +395,34 @@ int main(int argc, char *argv[])
         rtulog[0].LED2=rtulog[1].LED2;
         rtulog[0].LED3=rtulog[1].LED3;
         rtulog[0].ADC=rtulog[1].ADC;
+        rtulog[0].output_v=rtulog[1].output_v;
         rtulog[0].eventcount=rtulog[1].eventcount;
         for(int i=0;i<rtulog[1].eventcount;i++)
         rtulog[0].eventlist[i]=rtulog[1].eventlist[i];
         //init rtulog[1]
         rtulog[1].init();
-        
         sem_post(&my_semaphore);
+        //printf("r1 %d\n",rtulog[1].eventcount);
+        //printf("r0 %d\n",rtulog[0].eventcount);
+        int t=rtulog[0].eventcount;
         
         //send RTU number and time
+        
         bzero(log_buffer,MSG_SIZE);
         rtulog[0].print_log1(log_buffer);
         n = write(sockfd,log_buffer,strlen(log_buffer));
         if (n < 0)
             error("ERROR writing to socket");
-
+        //printf("after 1 r0 %d\n",rtulog[0].eventcount);
         //send current status
         bzero(log_buffer,MSG_SIZE);
         rtulog[0].print_log2(log_buffer);
         n = write(sockfd,log_buffer,strlen(log_buffer));
         if (n < 0)
          error("ERROR writing to socket");
-
         //send events
+        rtulog[0].eventcount=t;
+        //printf("after 2 r0 %d\n",rtulog[0].eventcount);
         bzero(log_buffer,MSG_SIZE);
         rtulog[0].print_log4(log_buffer);
         n = write(sockfd,log_buffer,strlen(log_buffer));
@@ -406,7 +430,7 @@ int main(int argc, char *argv[])
         error("ERROR writing to socket");
         
         //delay 1 s, TODO change to real time
-        sleep(2);
+        sleep(1);
         }
 
     }
@@ -416,8 +440,8 @@ int main(int argc, char *argv[])
 	
     close(pipe_c[1]);//pipe
     //detect ADC
-    int t1=pthread_create(&ptr1,NULL,Thread_ADC,NULL);
-
+    
+    int x;
     while(1){
         bzero(buffer,MSG_SIZE);
         //receive command from server
