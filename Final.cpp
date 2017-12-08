@@ -249,11 +249,10 @@ void* Thread_ADC(void *arg){
 
 
         rtulog[1].output_v=((3.300/1023)*ADCvalue)/2.0;
+        //get a random number to simulate overload
         int rand_num=rand();
         if(rand_num%9==0 || rand_num %7==0)
         rtulog[1].output_v+=1;
-        //rtulog[1].output_v=(9.00/1023)*ADCvalue;
-        printf("adc %.2f",rtulog[1].output_v);
         if(rtulog[1].output_v>2 ||(rtulog[1].output_v<1 && rtulog[1].output_v>0)){
         rtulog[1].eventlist[rtulog[1].eventcount]=6;
         rtulog[1].eventcount++;}
@@ -402,8 +401,7 @@ int main(int argc, char *argv[])
         //init rtulog[1]
         rtulog[1].init();
         sem_post(&my_semaphore);
-        //printf("r1 %d\n",rtulog[1].eventcount);
-        //printf("r0 %d\n",rtulog[0].eventcount);
+
         int t=rtulog[0].eventcount;
         
         //send RTU number and time
@@ -413,7 +411,7 @@ int main(int argc, char *argv[])
         n = write(sockfd,log_buffer,strlen(log_buffer));
         if (n < 0)
             error("ERROR writing to socket");
-        //printf("after 1 r0 %d\n",rtulog[0].eventcount);
+        
         //send current status
         bzero(log_buffer,MSG_SIZE);
         rtulog[0].print_log2(log_buffer);
@@ -422,7 +420,7 @@ int main(int argc, char *argv[])
          error("ERROR writing to socket");
         //send events
         rtulog[0].eventcount=t;
-        //printf("after 2 r0 %d\n",rtulog[0].eventcount);
+
         bzero(log_buffer,MSG_SIZE);
         rtulog[0].print_log4(log_buffer);
         n = write(sockfd,log_buffer,strlen(log_buffer));
