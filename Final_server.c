@@ -1,4 +1,7 @@
-
+/* 	Name       : 	Final_server.cpp
+	Author     : 	Yiwei Lu and Brent Schultez
+	Description: 	ECE4220 Final Project 
+                    using code from server_tcp.c*/
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -82,18 +85,14 @@ int main(int argc, char *argv[])
      return 0; 		// we never get here
 }
 
-/********************************* DOSTUFF() **********************************
- There is a separate instance of this function for each connection.  It handles
- all communication once a connection has been established.
- *****************************************************************************/
 void dostuff (int sock)
 {
-   int n;
-   char buffer[MSG_SIZE];
-   char msg[MSG_SIZE];
-   p=fork();
+    int n;
+    char buffer[MSG_SIZE];
+    char msg[MSG_SIZE];
+    p=fork();
     if(p==0){
-     //child
+     //child send commands
     while(1){
     bzero(msg,MSG_SIZE);
     fgets(msg,MSG_SIZE-1,stdin);
@@ -101,6 +100,7 @@ void dostuff (int sock)
     if (n < 0)
 	   error("ERROR writing to socket");}
 }
+    //father receive commands
     else{
     while(1){
     bzero(buffer,MSG_SIZE);

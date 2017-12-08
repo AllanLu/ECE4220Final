@@ -1,10 +1,12 @@
+/* 	Name       : 	Final.cpp
+	Author     : 	Yiwei Lu and Brent Schultez
+	Description: 	ECE4220 Final Project */
 #include <iostream>
 #include <string>
 #include <stdio.h>
-
 #include <stdlib.h>
 #include <unistd.h>
-#include <stdint.h>		// for the integer types
+#include <stdint.h>	
 #include <wiringPi.h>
 #include <wiringPiSPI.h>
 
@@ -21,6 +23,7 @@
 #include <fcntl.h>
 #include <pthread.h>  
 #include <semaphore.h>
+
 #define MSG_SIZE 40
 #define SPI_CHANNEL	      0	// 0 or 1
 #define SPI_SPEED 	2000000	// Max speed is 3.6 MHz when VDD = 5 V
@@ -30,9 +33,18 @@ using namespace std;
 sem_t my_semaphore;
 uint16_t ADCvalue;
 uint16_t get_ADC(int channel);
-int globaleventlist[10];
-int globaleventcount;
-int pipe_p[2], pipe_c[2];
+int pipe_c[2];
+
+RTUlog rtulog[2];//0 for the past 1s, 1 for current 1s
+char buffer[MSG_SIZE]; //buffer used to receive message
+char log_buffer[MSG_SIZE];//buffer used to send message
+
+int status=0;
+int sockfd, portno, n;
+struct sockaddr_in serv_addr;
+struct hostent *server;
+char msg[MSG_SIZE];
+pid_t p;
 
 void error(const char *msg)
 {
@@ -40,6 +52,7 @@ void error(const char *msg)
     exit(0);
 }
 
+//get ADC value
 uint16_t get_ADC(int ADC_chan)
 {
 	uint8_t spiData[3];
@@ -59,7 +72,7 @@ uint16_t get_ADC(int ADC_chan)
 	return ((spiData[1] << 8) | spiData[2]);
 }
 
-//need event list to show every event
+//RTU class
 class RTUlog{
     public:
         RTUlog(){
@@ -72,173 +85,104 @@ class RTUlog{
         LED3=0;
         ADC=0;
         eventcount=0;
-        for(int i=0;i<6;i++)
-        change[i]=0;
         for(int i=0;i<10;i++)
         eventlist[i]=0;
- 
+
     }
 
-    int RTU_num;
-    int switch1;
+    int RTU_num;//RTU number
+    int switch1;//1 for ON and 0 for OFF
     int switch2;
     int button;
     int LED1;
     int LED2;
     int LED3;
     int ADC;
-    int change[6];
-    int voltage[2];
-    string string_log;
-    char log_temp[MSG_SIZE];
-    time_t timep;
-    int eventcount;
+    string string_log;//use to send message
+    char log_temp[MSG_SIZE];//use to send message
+    time_t timep;//record time
+    int eventcount;//record event
     int eventlist[10];//0:s1 1:s2 2:b 3:L1 4:L2 5:L3 6:overload 7:no power
-    char int2char[3];
+    char int2char[3];//use to convert from int to char[]
     
+    //check status
     string check_status(int i){
         if(i==1){
-        return "1";}
+        return "ON";}
         else  if(i==0){
-        return "0";
+        return "OFF";
         }
     }
-    string check_change(){
-        string temp="";
-        if(change[0])
-        temp+="S1 Change ";
-        if(change[1])
-        temp+="S2 Change ";
-        if(change[2])
-        temp+="B Change ";
-        if(change[3])
-        temp+="L1 Change ";
-        if(change[4])
-        temp+="L2 Change ";
-        if(change[5])
-        temp+="L3 Change ";
-        if(voltage[0])
-        temp+="V Overload ";   
-        if(voltage[1])
-        temp+="No power ";           
-        
-        return temp;
-    }
+    //check event
     string check_event(int i,string s){
         switch(eventlist[i]){
-            case 0:s+="S1 Change ";break;
-            case 1:s+="S2 Change ";break;
-            case 2:s+="B Change ";break;
-            case 3:s+="L1 Change ";break;
-            case 4:s+="L2 Change ";break;
-            case 5:s+="L3 Change ";break;
-            case 6:s+="Overload ";break;
-            case 7:s+="No power ";break;
+        case 0:s+="S1 Change ";break;
+        case 1:s+="S2 Change ";break;
+        case 2:s+="B Change ";break;
+        case 3:s+="L1 Change ";break;
+        case 4:s+="L2 Change ";break;
+        case 5:s+="L3 Change ";break;
+        case 6:s+="Overload ";break;
+        case 7:s+="No power ";break;
         }       
         
         return s;
     }
     
-    void print_log(char bu[]){
-            
-            bzero(log_temp,MSG_SIZE);
-            time(&timep);
-            string_log="";   
-            string s_temp=ctime(&timep);
-            for(int i=11;i<=18;i++)
-            string_log+=s_temp[i];
-            string_log+="R1:";
-            string_log+="S1";
-            printf("S1%d\n",switch1);
-            string_log+=check_status(switch1);
-            string_log+="S2";
-            string_log+=check_status(switch2);
-            string_log+="B";
-            string_log+=check_status(button);
-            string_log+="L1";
-            string_log+=check_status(LED1);
-            string_log+="L2";
-            string_log+=check_status(LED2);
-            string_log+="L3";
-            string_log+=check_status(LED3);
-            string_log+="V";
-            string_log+=ADC;
-            string_log+="E";
-            string_log+=check_change();
-
-            for(int i=0;i<string_log.length();i++)
-            log_temp[i]=string_log[i];
-            log_temp[string_log.length()]='\0';
-            cout<<"log is "<<string_log<<endl;
-            strcpy(bu,log_temp);
-
-    }
+    //print RTU number and time
     void print_log1(char bu[]){
             
-            bzero(log_temp,MSG_SIZE);
-            string_log="RTU1@";
-            time(&timep);   
-            string s_temp=ctime(&timep);
-
-            for(int i=11;i<=18;i++)
-            string_log+=s_temp[i];
-            //string_log[i-6]=s_temp[i];
-            for(int i=0;i<string_log.length();i++)
-            log_temp[i]=string_log[i];
-            log_temp[string_log.length()]='\0';
-            strcpy(bu,log_temp);
+        bzero(log_temp,MSG_SIZE);
+        string_log="RTU1@";
+        time(&timep);   
+        string s_temp=ctime(&timep);
+        for(int i=11;i<=18;i++)
+        string_log+=s_temp[i];
+        //convert from string to char[]
+        for(int i=0;i<string_log.length();i++)
+        log_temp[i]=string_log[i];
+        log_temp[string_log.length()]='\0';
+        strcpy(bu,log_temp);
+    }
+    //print switch and LED status
+    void print_log2(char bu[]){
+        bzero(log_temp,MSG_SIZE);
+        string_log="";
+        string_log+="S1:";
+        string_log+=check_status(switch1);
+        string_log+=" S2:";
+        string_log+=check_status(switch2);
+        string_log+=" B:";
+        string_log+=check_status(button);
+        string_log+=" L1:";
+        string_log+=check_status(LED1);
+        string_log+=" L2:";
+        string_log+=check_status(LED2);
+        string_log+=" L3:";
+        string_log+=check_status(LED3);
+        string_log+=" V:";
+        bzero(int2char,3);
+        sprintf(int2char,"%d",ADC);
+        string_log+=int2char;
+        string_log+="\n";
+        //convert from string to char[]
+        for(int i=0;i<string_log.length();i++)
+        log_temp[i]=string_log[i];
+        log_temp[string_log.length()]='\0';
+        strcpy(bu,log_temp);
 
     }
-
-        void print_log2(char bu[]){
-            bzero(log_temp,MSG_SIZE);
-            printf("r0 %d %d %d\n",LED1,LED2,LED3);
-            string_log="";
-            string_log+="S1:";
-            string_log+=check_status(switch1);
-            string_log+=" S2:";
-            string_log+=check_status(switch2);
-            string_log+=" B:";
-            string_log+=check_status(button);
-            string_log+=" L1:";
-            string_log+=check_status(LED1);
-            string_log+=" L2:";
-            string_log+=check_status(LED2);
-            string_log+=" L3:";
-            string_log+=check_status(LED3);
-            string_log+=" V:";
-            bzero(int2char,3);
-            sprintf(int2char,"%d",ADC);
-            string_log+=int2char;
-            string_log+="\n";
-            for(int i=0;i<string_log.length();i++)
-            log_temp[i]=string_log[i];
-            log_temp[string_log.length()]='\0';
-            strcpy(bu,log_temp);
-
-    }
-
-        void print_log3(char bu[]){
-            bzero(log_temp,MSG_SIZE);
-            string_log="Event: ";
-            string_log+=check_change();
-            for(int i=0;i<string_log.length();i++)
-            log_temp[i]=string_log[i];
-            log_temp[string_log.length()]='\0';
-            strcpy(bu,log_temp);
-
-    }
-        void print_log4(char bu[]){
-            bzero(log_temp,MSG_SIZE);
-            string_log="Event: ";
-            //printf("before check event\n");
-            for(int i=0;i<eventcount;i++)
-            string_log=check_event(i,string_log);
-            //printf("after check event\n");
-            for(int i=0;i<string_log.length();i++)
-            log_temp[i]=string_log[i];
-            log_temp[string_log.length()]='\0';
-            strcpy(bu,log_temp);
+    //print event
+    void print_log4(char bu[]){
+        bzero(log_temp,MSG_SIZE);
+        string_log="Event: ";
+        for(int i=0;i<eventcount;i++)
+        string_log=check_event(i,string_log);
+        //convert from string to char[]
+        for(int i=0;i<string_log.length();i++)
+        log_temp[i]=string_log[i];
+        log_temp[string_log.length()]='\0';
+        strcpy(bu,log_temp);
 
     }
 
@@ -252,36 +196,16 @@ class RTUlog{
         LED3=0;
         ADC=0;
         eventcount=0;
-        for(int i=0;i<6;i++)
-        change[i]=0;
         for(int i=0;i<10;i++)
         eventlist[i]=0;
     }
 };
 
 
-int current=0;
-unsigned int current_time;
-RTUlog rtulog[2];//0 for the past 1s, 1 for current 1s
-struct timeval tv;
-char buffer[MSG_SIZE]; //buffer
-char log_buffer[MSG_SIZE];
-
-
-int status=0;
-int sockfd, portno, n;
-struct sockaddr_in serv_addr;
-struct hostent *server;
-char msg[MSG_SIZE];
-pid_t p;
-int sendflag;
-
-
 
 //use ISR to detect
 void switch1(){
     sem_wait(&my_semaphore);
-    rtulog[1].change[0]=1;
     rtulog[1].eventlist[rtulog[1].eventcount]=0;
     rtulog[1].eventcount++;
     sem_post(&my_semaphore);
@@ -289,7 +213,6 @@ void switch1(){
 }
 void switch2(){
     sem_wait(&my_semaphore);
-    rtulog[1].change[1]=1;
     rtulog[1].eventlist[rtulog[1].eventcount]=1;
     rtulog[1].eventcount++;
     sem_post(&my_semaphore);
@@ -297,91 +220,31 @@ void switch2(){
 }
 void button(){
     sem_wait(&my_semaphore);
-    rtulog[1].change[2]=1;
     rtulog[1].eventlist[rtulog[1].eventcount]=2;
     rtulog[1].eventcount++;
     sem_post(&my_semaphore);
     cout<<"button ISR"<<endl;
 }
 
-
 //read ADC
 void* Thread_ADC(void *arg){ 
         while(1){
         
         ADCvalue = get_ADC(ADC_CHANNEL);
-		printf("ADC Value: %d\n", ADCvalue);
+		//printf("ADC Value: %d\n", ADCvalue);
 		fflush(stdout);
         sem_wait(&my_semaphore);
         rtulog[1].ADC=ADCvalue;
+        if(ADCvalue>2 || ADCvalue<1)
+        rtulog[1].eventlist[rtulog[1].eventcount]=6;
+        rtulog[1].eventcount++;
         sem_post(&my_semaphore);
 		sleep(1);// delay 1s
         
         }
         pthread_exit(0);
     }
-//report every 1s
-void* Thread_report(void *arg){ 
-        printf("start report\n");
-        while(1){
-        sem_wait(&my_semaphore);
-        //printf("before init\n");
-        rtulog[1].switch1=digitalRead(26);
-        rtulog[1].switch2=digitalRead(23);
-        rtulog[1].button=digitalRead(27);
-        rtulog[1].LED1=rtulog[0].LED1;
-        rtulog[1].LED2=rtulog[0].LED2;
-        rtulog[1].LED3=rtulog[0].LED3;
-        
-        rtulog[0].switch1=rtulog[1].switch1;
-        rtulog[0].switch2=rtulog[1].switch2;
-        rtulog[0].button=rtulog[1].button;
-        rtulog[0].LED1=rtulog[1].LED1;
-        rtulog[0].LED2=rtulog[1].LED2;
-        rtulog[0].LED3=rtulog[1].LED3;
-        
-        rtulog[0].ADC=rtulog[1].ADC;
-        rtulog[0].eventcount=rtulog[1].eventcount;
-        for(int i=0;i<6;i++)
-        rtulog[0].change[i]=rtulog[1].change[i];
-        for(int i=0;i<rtulog[1].eventcount;i++)
-        rtulog[0].eventlist[i]=rtulog[1].eventlist[i];
-        
-        rtulog[1].init();
-        bzero(log_buffer,MSG_SIZE);
-        rtulog[0].print_log1(log_buffer);    
-        //write(sockfd,"log1\n",5);
-        //write(sockfd,log_buffer,strlen(log_buffer));	// sendto() could be used.
-        bzero(log_buffer,MSG_SIZE);
-        rtulog[0].print_log2(log_buffer); 
-        //write(sockfd,log_buffer,strlen(log_buffer));
-        //write(sockfd,"log2\n",5);
-        bzero(log_buffer,MSG_SIZE);
-        //printf("before log4\n");
-        rtulog[0].print_log4(log_buffer);  
-        //printf("after log4\n");
-       // write(sockfd,"log3\n",5);   
-        //write(sockfd,log_buffer,strlen(log_buffer));
-        bzero(log_buffer,MSG_SIZE);                
-        sem_post(&my_semaphore);
-        sleep(10); //wait 1 s
-        }
-        pthread_exit(0);
-    }
 
-    //read ADC
-void* Thread_LED(void *arg){ 
-        sleep(10);
-        while(1){
-
-        int LEDe=0;
-        read(pipe_c[0], &LEDe,sizeof(LEDe));
-        printf("pipe %d\n",LEDe);
-        sleep(1);
-        
-        }
-        pthread_exit(0);
-    }
 
 int main(int argc, char *argv[])
 {
@@ -400,11 +263,7 @@ int main(int argc, char *argv[])
 		printf("wiringPiSPISetup failed\n");
 		return -1 ;
 	}
-    if(pipe(pipe_p) < 0)
-	{
-		printf("pipe creation error\n");
-		exit(-1);
-	}
+
 	if(pipe(pipe_c) < 0)
 	{
 		printf("pipe creation error\n");
@@ -412,7 +271,6 @@ int main(int argc, char *argv[])
 	}
 
 
-    
     //LED
     pinMode(8,OUTPUT);//red
     pinMode(9,OUTPUT);//yellow
@@ -429,6 +287,7 @@ int main(int argc, char *argv[])
     digitalWrite(9,0);
     digitalWrite(7,0);
 
+    //set switch and button
     pullUpDnControl(26,PUD_DOWN);
     pullUpDnControl(23,PUD_DOWN);
     pullUpDnControl(27,PUD_DOWN);
@@ -441,9 +300,10 @@ int main(int argc, char *argv[])
     if(wiringPiISR(27,INT_EDGE_FALLING,&button) < 0)
     printf("Unable to setup ISR on button \n");
 
-
+    //init semaphore
     sem_init(&my_semaphore, 0, 1);
 
+    //these below are from client_tcp.c to init tcp
     portno = atoi(argv[2]);		// port # was an input.
     sockfd = socket(AF_INET, SOCK_STREAM, 0); // Creates socket. Connection based.
     if (sockfd < 0)
@@ -467,39 +327,33 @@ int main(int argc, char *argv[])
     // establish connection to the server
     if (connect(sockfd,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0)
         error("ERROR connecting");
-
-    //main receive massage from socket
-    //thread log information
-
-    globaleventcount=0;
-    for(int i=0;i<10;i++)
-    globaleventlist[i]=0;
     
+    //use child process
     p=fork();
 
-    pthread_t ptr1,ptr2,ptr3;
+    pthread_t ptr1,ptr2;
+    
+    //father
+    if(p != 0){
 
-    if(p!=0){
-        close(pipe_p[1]);		// not really needed, but it emphasizes that these sides
-	    close(pipe_c[0]);		// are not needed for the parent process (in this example)
-        int t3=pthread_create(&ptr3,NULL,Thread_LED,NULL);
+	    close(pipe_c[0]);//plan to use pipe to communicate between father and child process
+        
         while(1){
         sem_wait(&my_semaphore);
+        //switch status
         rtulog[1].switch1=digitalRead(26);
         rtulog[1].switch2=digitalRead(23);
         rtulog[1].button=digitalRead(27);
-        // rtulog[1].LED1=rtulog[0].LED1;
-        // rtulog[1].LED2=rtulog[0].LED2;
-        // rtulog[1].LED3=rtulog[0].LED3;
-
+        //LED status
         rtulog[1].LED1=digitalRead(8);
         rtulog[1].LED2=digitalRead(9);
         rtulog[1].LED3=digitalRead(7);
-        
+        //copy from current to past
         rtulog[0].switch1=rtulog[1].switch1;
         rtulog[0].switch2=rtulog[1].switch2;
         rtulog[0].button=rtulog[1].button;
-
+        
+        //detect LED change because failing to use pipe
         if(rtulog[0].LED1!=rtulog[1].LED1){
             rtulog[1].eventlist[rtulog[1].eventcount]=3;
             rtulog[1].eventcount++;
@@ -512,83 +366,73 @@ int main(int argc, char *argv[])
             rtulog[1].eventlist[rtulog[1].eventcount]=5;
             rtulog[1].eventcount++;
         }
-
-
+        //detect no power
+        if(rtulog[0].ADC==rtulog[1].ADC){
+            rtulog[1].eventlist[rtulog[1].eventcount]=7;
+            rtulog[1].eventcount++;
+        }
+        //copy from current to past
         rtulog[0].LED1=rtulog[1].LED1;
         rtulog[0].LED2=rtulog[1].LED2;
         rtulog[0].LED3=rtulog[1].LED3;
         rtulog[0].ADC=rtulog[1].ADC;
         rtulog[0].eventcount=rtulog[1].eventcount;
-        for(int i=0;i<6;i++)
-        rtulog[0].change[i]=rtulog[1].change[i];
         for(int i=0;i<rtulog[1].eventcount;i++)
         rtulog[0].eventlist[i]=rtulog[1].eventlist[i];
-        
+        //init rtulog[1]
         rtulog[1].init();
+        
         sem_post(&my_semaphore);
+        
+        //send RTU number and time
         bzero(log_buffer,MSG_SIZE);
         rtulog[0].print_log1(log_buffer);
         n = write(sockfd,log_buffer,strlen(log_buffer));
         if (n < 0)
             error("ERROR writing to socket");
 
+        //send current status
         bzero(log_buffer,MSG_SIZE);
         rtulog[0].print_log2(log_buffer);
         n = write(sockfd,log_buffer,strlen(log_buffer));
         if (n < 0)
          error("ERROR writing to socket");
-        
 
-        // printf("rtu event count%d \n",rtulog[0].eventcount);
-        // for(int i=0;i<10;i++)
-        // printf("%d ",rtulog[0].eventlist[i]);
-        
-        // printf("\nglobal event count %d\n",globaleventcount);
-        
-        // for(int j=0;j<10;j++)
-        // printf("%d ",globaleventlist[j]);
-
-
-
+        //send events
         bzero(log_buffer,MSG_SIZE);
         rtulog[0].print_log4(log_buffer);
         n = write(sockfd,log_buffer,strlen(log_buffer));
         if (n < 0)
         error("ERROR writing to socket");
-        //write(sockfd,"log1\n",5);
-        //write(sockfd,"log2\n",5);
-        //write(sockfd,"log3\n",5);
         
-        sleep(10);
+        //delay 1 s, TODO change to real time
+        sleep(2);
         }
 
     }
-    else{
-    close(pipe_p[0]);	// not really needed, but it emphasizes that these sides
-	close(pipe_c[1]);	// are not needed for the child process (in this example)
     
+    //child process
+    else{
+	
+    close(pipe_c[1]);//pipe
+    //detect ADC
     int t1=pthread_create(&ptr1,NULL,Thread_ADC,NULL);
-    //int t2=pthread_create(&ptr2,NULL,Thread_report,NULL);
-    int x=0;
-    int LEDevent=0;
-    while(x<100000){
-        x++;
+
+    while(1){
         bzero(buffer,MSG_SIZE);
-        n = read(sockfd,buffer,MSG_SIZE-1);	// recvfrom() could be used
+        //receive command from server
+        n = read(sockfd,buffer,MSG_SIZE-1);	
         if (n < 0)
             error("ERROR reading from socket");
         
         printf("Command received: %s\n",buffer);
-        sendflag=0;
+        
         //check ONLED
         if(strstr(buffer,"ONLED1")!=0){
             digitalWrite(8,1);
-            LEDevent=4;
-            write(pipe_c[1], &LEDevent, sizeof(LEDevent));
             sem_wait(&my_semaphore);
             rtulog[0].LED1=1;
             rtulog[1].LED1=1;
-            rtulog[1].change[3]=1;
             rtulog[1].eventlist[rtulog[1].eventcount]=3;
             rtulog[1].eventcount++;
             sem_post(&my_semaphore);
@@ -597,12 +441,9 @@ int main(int argc, char *argv[])
         //check ONLED
         if(strstr(buffer,"ONLED2")!=0){
             digitalWrite(9,1);
-            LEDevent=5;
-            write(pipe_c[1], &LEDevent, sizeof(LEDevent));
             sem_wait(&my_semaphore);
             rtulog[0].LED2=1;
             rtulog[1].LED2=1;
-            rtulog[1].change[4]=1;
             rtulog[1].eventlist[rtulog[1].eventcount]=4;
             rtulog[1].eventcount++;
             sem_post(&my_semaphore);
@@ -611,12 +452,9 @@ int main(int argc, char *argv[])
         //check ONLED
         if(strstr(buffer,"ONLED3")!=0){
             digitalWrite(7,1);
-            LEDevent=6;
-            write(pipe_c[1], &LEDevent, sizeof(LEDevent));
             sem_wait(&my_semaphore);
             rtulog[0].LED3=1;
             rtulog[1].LED3=1;
-            rtulog[1].change[5]=1;
             rtulog[1].eventlist[rtulog[1].eventcount]=5;
             rtulog[1].eventcount++;
             sem_post(&my_semaphore);
@@ -625,12 +463,9 @@ int main(int argc, char *argv[])
         //check OFFLED
         if(strstr(buffer,"OFFLED1")!=0){
             digitalWrite(8,0);
-            LEDevent=4;
-            write(pipe_c[1], &LEDevent, sizeof(LEDevent));
             sem_wait(&my_semaphore);
             rtulog[0].LED1=0;
             rtulog[1].LED1=0;
-            rtulog[1].change[3]=1;
             rtulog[1].eventlist[rtulog[1].eventcount]=3;
             rtulog[1].eventcount++;
             sem_post(&my_semaphore);
@@ -639,12 +474,9 @@ int main(int argc, char *argv[])
         //check OFFLED
         if(strstr(buffer,"OFFLED2")!=0){
             digitalWrite(9,0);
-            LEDevent=5;
-            write(pipe_c[1], &LEDevent, sizeof(LEDevent));
             sem_wait(&my_semaphore);
             rtulog[0].LED2=0;
             rtulog[1].LED2=0;
-            rtulog[1].change[4]=1;
             rtulog[1].eventlist[rtulog[1].eventcount]=4;
             rtulog[1].eventcount++;
             sem_post(&my_semaphore);
@@ -653,23 +485,16 @@ int main(int argc, char *argv[])
         //check OFFLED
         if(strstr(buffer,"OFFLED3")!=0){
             digitalWrite(7,0);
-            LEDevent=6;
-            write(pipe_c[1], &LEDevent, sizeof(LEDevent));
             sem_wait(&my_semaphore);
             rtulog[0].LED3=0;
             rtulog[1].LED3=0;
-            rtulog[1].change[5]=1;
             rtulog[1].eventlist[rtulog[1].eventcount]=5;
             rtulog[1].eventcount++;
             sem_post(&my_semaphore);
         }
-
-
-
-
-
     }
     }
+    
     close(sockfd);	
     return 0;
 }
